@@ -7,15 +7,12 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 const TGSTAT_TOKEN = process.env.TGSTAT_TOKEN || '97bdcc340e3769bd70caea8f8dc6a0ef';
 
-// Supabase
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://eujjvjneynhmuazgihlz.supabase.co';
 const SUPABASE_KEY = process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV1amp2am5leW5obXVhemdpaGx6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM1NzY5NDksImV4cCI6MjA4OTE1Mjk0OX0.B9Zba0IcQM8A8kebpm8ixiglVtMuSdT9KYaDFDYR1-U';
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 app.use(cors());
 app.use(express.json());
-
-// ═══════════ ПОМОЩНЫЕ ФУНКЦИИ ═══════════
 
 function cleanChannel(input) {
   if (!input) return '';
@@ -41,23 +38,18 @@ function getVerdict(erPercent) {
   return { label: 'Низкий ER', color: 'red', emoji: '🔴' };
 }
 
-// ═══════════ API МАРШРУТЫ ═══════════
-
 app.get('/', (req, res) => {
   res.json({ status: 'ok', service: 'TG Bee API', version: '2.0.0' });
 });
 
-// Регистрация / обновление пользователя
 app.post('/api/user', async (req, res) => {
   const { id, username, first_name } = req.body;
   if (!id) return res.status(400).json({ error: 'id required' });
-
   try {
     const { data, error } = await supabase
       .from('users')
       .upsert({ id, username, first_name }, { onConflict: 'id' })
       .select();
-    
     if (error) throw error;
     res.json({ user: data[0] });
   } catch (e) {
@@ -66,7 +58,6 @@ app.post('/api/user', async (req, res) => {
   }
 });
 
-// Анализ канала
 app.get('/api/channel/:username', async (req, res) => {
   const channel = cleanChannel(req.params.username);
   const userId = req.query.userId || null;
@@ -142,6 +133,10 @@ app.get('/api/channel/:username', async (req, res) => {
     // Сохраняем анализ в базу
     if (userId) {
       try {
+        await supabase.from('users').upsert(
+          { id: parseInt(userId), username: 'tg_user', first_name: 'User' },
+          { onConflict: 'id' }
+        );
         await supabase.from('analyses').insert({
           user_id: parseInt(userId),
           channel_username: username,
@@ -170,11 +165,9 @@ app.get('/api/channel/:username', async (req, res) => {
   }
 });
 
-// Поиск каналов
 app.get('/api/search', async (req, res) => {
   const query = req.query.q;
   const limit = Math.min(parseInt(req.query.limit) || 5, 20);
-
   if (!query) return res.status(400).json({ error: 'Укажите параметр q' });
 
   try {
@@ -201,20 +194,23 @@ app.get('/api/search', async (req, res) => {
   }
 });
 
-// Заявка на разбор (из анкеты PA)
 app.post('/api/audit', async (req, res) => {
   const { userId, channel, who, income, budget, tried, pain } = req.body;
-
   try {
+    if (userId) {
+      await supabase.from('users').upsert(
+        { id: parseInt(userId), username: 'tg_user', first_name: 'User' },
+        { onConflict: 'id' }
+      );
+    }
     const { data, error } = await supabase
       .from('audit_requests')
       .insert({
-        user_id: userId || null,
+        user_id: userId ? parseInt(userId) : null,
         channel, who, income, budget, tried, pain,
         status: 'new'
       })
       .select();
-
     if (error) throw error;
     res.json({ success: true, request: data[0] });
   } catch (e) {
@@ -223,7 +219,6 @@ app.post('/api/audit', async (req, res) => {
   }
 });
 
-// История анализов пользователя
 app.get('/api/user/:userId/analyses', async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -232,7 +227,6 @@ app.get('/api/user/:userId/analyses', async (req, res) => {
       .eq('user_id', parseInt(req.params.userId))
       .order('created_at', { ascending: false })
       .limit(20);
-
     if (error) throw error;
     res.json({ analyses: data });
   } catch (e) {
@@ -240,10 +234,7 @@ app.get('/api/user/:userId/analyses', async (req, res) => {
   }
 });
 
-// ═══════════ ЗАПУСК ═══════════
-
 app.listen(PORT, () => {
   console.log('TG Bee API v2.0 на порту ' + PORT);
-  console.log('Supabase: подключён');
-  console.log('TGStat: подключён');
+  console.log('Supabase + TGStat подключены');
 });
