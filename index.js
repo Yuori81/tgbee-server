@@ -32,25 +32,57 @@ function formatNum(n) {
   return n.toString();
 }
 
-// ═══════════ УМНЫЙ СКОРИНГ ═══════════
+// ═══════════ УМНЫЙ СКОРИНГ v2.2 ═══════════
+// Источники порогов ER: kurshub.ru, menedgertg.ru, vc.ru
+// Закон больших чисел: чем больше подписчиков, тем ниже ER
+
+function getERScore(er, subs) {
+  // Дифференцированные пороги ER по размеру канала
+  // Возвращает: { score (0-25), level: 'excellent'|'good'|'normal'|'weak' }
+
+  if (!er || er === 0) return { score: 0, level: 'none' };
+
+  let thresholds;
+
+  if (subs < 1000) {
+    // До 1k: маленький канал, аудитория обычно вовлечена
+    thresholds = { excellent: 15, good: 10, normal: 5 };
+  } else if (subs < 5000) {
+    // 1k-5k: растущий канал
+    thresholds = { excellent: 10, good: 7, normal: 3 };
+  } else if (subs < 20000) {
+    // 5k-20k: средний канал
+    thresholds = { excellent: 7, good: 5, normal: 2 };
+  } else if (subs < 100000) {
+    // 20k-100k: большой канал
+    thresholds = { excellent: 4, good: 3, normal: 1.5 };
+  } else {
+    // 100k+: гигант, ER естественно низкий
+    thresholds = { excellent: 3, good: 2, normal: 1 };
+  }
+
+  if (er >= thresholds.excellent) return { score: 25, level: 'excellent' };
+  if (er >= thresholds.good) return { score: 20, level: 'good' };
+  if (er >= thresholds.normal) return { score: 12, level: 'normal' };
+  return { score: 4, level: 'weak' };
+}
 
 function getVerdict(data) {
   let score = 0;
   let maxScore = 0;
   const notes = [];
 
-  // 1. ER (вес 25)
+  // 1. ER с учётом размера канала (вес 25)
   const er = data.er || 0;
+  const subs = data.participants || 0;
   maxScore += 25;
-  if (er >= 10) { score += 25; }
-  else if (er >= 6) { score += 20; }
-  else if (er >= 4) { score += 15; }
-  else if (er >= 2) { score += 8; }
-  else if (er > 0) { score += 3; }
+  const erResult = getERScore(er, subs);
+  score += erResult.score;
 
-  if (er >= 6) notes.push('ER выше среднего — аудитория вовлечена');
-  else if (er >= 2) notes.push('ER в норме, но есть куда расти');
-  else if (er > 0) notes.push('ER низкий — возможна накрутка или неактивная аудитория');
+  if (erResult.level === 'excellent') notes.push('ER отличный для канала такого размера');
+  else if (erResult.level === 'good') notes.push('ER хороший — аудитория вовлечена');
+  else if (erResult.level === 'normal') notes.push('ER в норме, но есть куда расти');
+  else if (erResult.level === 'weak') notes.push('ER низкий для канала такого размера — проверьте качество аудитории');
 
   // 2. ERR (вес 10)
   const err = data.err || 0;
@@ -61,7 +93,6 @@ function getVerdict(data) {
 
   // 3. Охват поста относительно подписчиков (вес 15)
   const reach = data.avgPostReach || 0;
-  const subs = data.participants || 0;
   maxScore += 15;
   if (subs > 0 && reach > 0) {
     const reachRatio = reach / subs;
@@ -100,16 +131,16 @@ function getVerdict(data) {
   if (data.lastPostDaysAgo !== null && data.lastPostDaysAgo !== undefined) {
     if (data.lastPostDaysAgo <= 1) { score += 25; }
     else if (data.lastPostDaysAgo <= 3) { score += 22; }
-    else if (data.lastPostDaysAgo <= 7) { score += 15; }
-    else if (data.lastPostDaysAgo <= 14) { score += 7; }
-    else if (data.lastPostDaysAgo <= 30) { score += 3; }
+    else if (data.lastPostDaysAgo <= 5) { score += 15; }
+    else if (data.lastPostDaysAgo <= 7) { score += 7; }
+    else if (data.lastPostDaysAgo <= 14) { score += 3; }
     else { score += 0; }
 
-    if (data.lastPostDaysAgo > 14) {
-      notes.push('Последний пост ' + data.lastPostDaysAgo + ' дней назад — канал заброшен');
-    } else if (data.lastPostDaysAgo > 7) {
-      notes.push('Последний пост ' + data.lastPostDaysAgo + ' дней назад — канал малоактивен');
-    } else if (data.lastPostDaysAgo <= 2) {
+    if (data.lastPostDaysAgo > 5) {
+      notes.push('Последний пост ' + data.lastPostDaysAgo + ' дней назад — канал неактивен');
+    } else if (data.lastPostDaysAgo > 3) {
+      notes.push('Последний пост ' + data.lastPostDaysAgo + ' дней назад — активность снижена');
+    } else if (data.lastPostDaysAgo <= 1) {
       notes.push('Канал публикует регулярно');
     }
   }
@@ -117,40 +148,77 @@ function getVerdict(data) {
   // Нормализуем в 0-100
   const finalScore = maxScore > 0 ? Math.round((score / maxScore) * 100) : 0;
 
-  // Определяем вердикт
+  // Определяем вердикт по score
   let label, color, emoji;
   if (finalScore >= 75) { label = 'Отлично'; color = 'green'; emoji = '🟢'; }
   else if (finalScore >= 55) { label = 'Хорошо'; color = 'green'; emoji = '🟢'; }
   else if (finalScore >= 35) { label = 'Средне'; color = 'yellow'; emoji = '🟡'; }
   else if (finalScore > 0) { label = 'Слабо'; color = 'red'; emoji = '🔴'; }
-  else { label = 'Нет данных'; color: 'muted'; emoji = '⚪'; }
+  else { label = 'Нет данных'; color = 'muted'; emoji = '⚪'; }
 
-  // Генерируем рекомендации по правилам
+  // ═══ ЖЁСТКИЕ ОГРАНИЧЕНИЯ ПО СВЕЖЕСТИ ПОСТОВ ═══
+  // Эти правила перекрывают score — неактивный канал не может быть "Хорошим"
+  let maxLabel = 'Отлично';
+  if (data.lastPostDaysAgo !== null && data.lastPostDaysAgo !== undefined) {
+    if (data.lastPostDaysAgo > 5) { maxLabel = 'Слабо'; }       // >5 дней — 🔴 мёртвый для рекламы
+    else if (data.lastPostDaysAgo > 3) { maxLabel = 'Средне'; }  // 3-5 дней — 🟡 риск
+    else if (data.lastPostDaysAgo > 1) { maxLabel = 'Хорошо'; }  // 1-3 дня — потолок Хорошо
+    // ≤1 дня — без ограничений
+  }
+
+  // Применяем потолок
+  const levels = ['Слабо', 'Средне', 'Хорошо', 'Отлично'];
+  const maxIdx = levels.indexOf(maxLabel);
+  const curIdx = levels.indexOf(label);
+  if (maxIdx >= 0 && curIdx > maxIdx) {
+    label = maxLabel;
+    if (maxLabel === 'Слабо') { color = 'red'; emoji = '🔴'; }
+    else if (maxLabel === 'Средне') { color = 'yellow'; emoji = '🟡'; }
+    else if (maxLabel === 'Хорошо') { color = 'green'; emoji = '🟢'; }
+  }
+
+  // ═══ РЕКОМЕНДАЦИИ ═══
   const recommendations = [];
 
-  if (data.lastPostDaysAgo !== null && data.lastPostDaysAgo > 7) {
-    recommendations.push('Канал неактивен — начните публиковать хотя бы 2-3 раза в неделю');
+  // Свежесть — приоритет №1
+  if (data.lastPostDaysAgo !== null && data.lastPostDaysAgo > 5) {
+    recommendations.push('Канал неактивен ' + data.lastPostDaysAgo + ' дней — начните публиковать минимум 3 раза в неделю');
+  } else if (data.lastPostDaysAgo !== null && data.lastPostDaysAgo > 3) {
+    recommendations.push('Активность снижена — публикуйте чаще, иначе аудитория уйдёт');
   }
-  if (er < 4 && subs > 1000) {
-    recommendations.push('ER ниже нормы при большой аудитории — проверьте качество подписчиков');
+
+  // ER по размеру
+  if (erResult.level === 'weak' && subs > 1000) {
+    recommendations.push('ER ниже нормы — проверьте качество подписчиков, возможна накрутка');
   }
-  if (er >= 6 && subs < 5000) {
-    recommendations.push('Хороший ER — самое время масштабировать через ВП');
+  if (erResult.level === 'weak' && subs <= 1000) {
+    recommendations.push('ER низкий даже для маленького канала — пересмотрите контент-стратегию');
   }
+  if (erResult.level === 'excellent' && subs < 5000 && data.lastPostDaysAgo !== null && data.lastPostDaysAgo <= 3) {
+    recommendations.push('Отличный ER — масштабируйте через ВП, пока аудитория горячая');
+  }
+  if (erResult.level === 'good' && subs >= 1000 && data.lastPostDaysAgo !== null && data.lastPostDaysAgo <= 3) {
+    recommendations.push('ER хороший — попробуйте взаимопиар с каналами вашей ниши');
+  }
+
+  // Охваты
   if (reach > 0 && subs > 0 && (reach / subs) < 0.1) {
-    recommendations.push('Охваты низкие — попробуйте увеличить частоту и разнообразие контента');
+    recommendations.push('Охваты низкие — экспериментируйте с форматами и временем публикации');
   }
+
+  // Посты
   if (posts < 30) {
-    recommendations.push('Публикуйте чаще — минимум 3-4 поста в неделю для роста');
+    recommendations.push('Мало публикаций — для роста нужно минимум 3-4 поста в неделю');
   }
-  if (er >= 4 && subs >= 1000 && data.lastPostDaysAgo !== null && data.lastPostDaysAgo <= 7) {
-    recommendations.push('Попробуйте взаимопиар — ваш ER позволяет получить хороший отклик');
-  }
-  if (subs >= 3000 && er >= 3 && data.lastPostDaysAgo !== null && data.lastPostDaysAgo <= 7) {
+
+  // Реклама
+  if (subs >= 3000 && erResult.level !== 'weak' && data.lastPostDaysAgo !== null && data.lastPostDaysAgo <= 3) {
     recommendations.push('Канал готов к тестовой рекламе — начните с бюджета 3-5 тыс ₽');
   }
+
+  // Цитируемость
   if (ci < 10) {
-    recommendations.push('Низкая цитируемость — делайте уникальный контент, который хочется репостить');
+    recommendations.push('Низкая цитируемость — создавайте уникальный контент, который репостят');
   }
 
   return {
@@ -164,7 +232,7 @@ function getVerdict(data) {
 // ═══════════ API МАРШРУТЫ ═══════════
 
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', service: 'TG Bee API', version: '2.1.0' });
+  res.json({ status: 'ok', service: 'TG Bee API', version: '2.2.0' });
 });
 
 app.post('/api/user', async (req, res) => {
@@ -258,7 +326,7 @@ app.get('/api/channel/:username', async (req, res) => {
     const dailyReach = stat?.daily_reach || 0;
     const postsCount = stat?.posts_count || 0;
 
-    // Шаг 5: Умный скоринг
+    // Шаг 5: Умный скоринг v2.2
     const verdict = getVerdict({
       er: erPercent,
       err: errPercent,
@@ -350,6 +418,7 @@ app.get('/api/search', async (req, res) => {
         er: erPercent, erFormatted: erPercent ? erPercent.toFixed(1) + '%' : '—',
         avgPostReach: ch.avg_post_reach || 0, avgPostReachFormatted: formatNum(ch.avg_post_reach),
         category: ch.category || '—',
+        // В поиске нет данных о постах, поэтому lastPostDaysAgo = null
         verdict: getVerdict({ er: erPercent, err: 0, avgPostReach: ch.avg_post_reach || 0, participants: ch.participants_count || 0, postsCount: 0, dailyReach: 0, ciIndex: ch.ci_index || 0, lastPostDaysAgo: null, avgViews: 0 }),
       };
     });
@@ -407,6 +476,7 @@ app.get('/api/user/:userId/analyses', async (req, res) => {
 // ═══════════ ЗАПУСК ═══════════
 
 app.listen(PORT, () => {
-  console.log('TG Bee API v2.1 на порту ' + PORT);
-  console.log('Supabase + TGStat + Smart Scoring');
+  console.log('TG Bee API v2.2 на порту ' + PORT);
+  console.log('Smart Scoring: ER по размеру канала + свежесть постов');
+  console.log('Supabase + TGStat подключены');
 });
